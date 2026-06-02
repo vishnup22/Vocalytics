@@ -170,15 +170,18 @@ vocallytics/
 │   │   ├── transcribe/route.ts   Speech → text (Whisper)
 │   │   ├── nl2sql/route.ts       Text → SQL + chart spec (Claude)
 │   │   └── query/route.ts        Validated read-only SQL execution
-│   ├── globals.css
-│   ├── layout.tsx
-│   └── page.tsx                  Main UI
-├── components/
-│   ├── MicButton.tsx             Voice capture + waveform
-│   ├── Chart.tsx                 Plotly renderer
-│   ├── SqlPanel.tsx              SQL display
-│   ├── ExamplePrompts.tsx        Canned questions
-│   └── plotly.ts                 Client-only Plotly bundle
+│   ├── layout.tsx                Next.js root layout (fonts, metadata)
+│   └── page.tsx                  Re-exports main UI from `frontend/`
+├── frontend/
+│   ├── pages/Home.tsx            Main UI
+│   ├── components/
+│   │   ├── MicButton.tsx         Voice capture + waveform
+│   │   ├── Chart.tsx             Plotly renderer
+│   │   ├── SqlPanel.tsx          SQL display
+│   │   ├── ExamplePrompts.tsx    Canned questions
+│   │   └── plotly.ts             Client-only Plotly bundle
+│   ├── styles/globals.css
+│   └── types/
 ├── lib/
 │   ├── schema.ts                 DB catalog + glossary (LLM)
 │   ├── sql-guard.ts              SELECT-only validation
@@ -198,8 +201,6 @@ vocallytics/
 │   ├── build-summaries.ts        Rebuild rollup tables
 │   └── seed-synthetic.ts         Legacy synthetic dataset
 ├── data/instacart/               Kaggle CSVs (gitignored; see README inside)
-├── types/
-│   └── plotly.js-dist-min.d.ts
 ├── .github/workflows/ci.yml   GitHub Actions (typecheck, test, lint, build)
 ├── .env.example
 ├── package.json

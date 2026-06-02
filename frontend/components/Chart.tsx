@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import type { ChartSpec } from "@/lib/types";
 
-const Plot = dynamic(() => import("@/components/plotly"), {
+const Plot = dynamic(() => import("@/frontend/components/plotly"), {
   ssr: false,
   loading: () => <div className="p-8 text-center text-slate-400">Loading chart…</div>,
 }) as unknown as React.ComponentType<{
