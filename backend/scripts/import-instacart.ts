@@ -10,7 +10,7 @@ import { buildSummaries } from "./build-summaries";
 loadEnv({ path: ".env.local" });
 loadEnv();
 
-const DATA_DIR = join(process.cwd(), "data", "instacart");
+const DATA_DIR = join(process.cwd(), "backend", "data", "instacart");
 
 const FILES = {
   departments: "departments.csv",
@@ -35,7 +35,7 @@ function requireFile(name: string): string {
   const path = join(DATA_DIR, name);
   if (!existsSync(path)) {
     console.error(`Missing: ${path}`);
-    console.error("Download Instacart CSVs — see data/instacart/README.md");
+    console.error("Download Instacart CSVs — see backend/data/instacart/README.md");
     process.exit(1);
   }
   return path;
@@ -75,7 +75,10 @@ async function main() {
   await client.connect();
   console.log(`Connected. Items mode: ${itemsMode}`);
 
-  const schemaSql = readFileSync(join(process.cwd(), "db", "schema.sql"), "utf8");
+  const schemaSql = readFileSync(
+    join(process.cwd(), "backend", "db", "schema.sql"),
+    "utf8"
+  );
   console.log("Applying schema…");
   await client.query(schemaSql);
 

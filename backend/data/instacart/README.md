@@ -45,6 +45,6 @@ The full dataset (~34M line items) can exceed **Supabase free tier (~500 MB)** a
 If you already imported but queries fail, free space then run:
 
 ```bash
-# In Supabase SQL editor, paste db/summary-tables.sql
+# In Supabase SQL editor, paste backend/db/summary-tables.sql
 npm run build:summaries
 ```

@@ -99,7 +99,7 @@ cp .env.example .env.local
 
 ### 3. Load data
 
-1. Download [Instacart CSVs](https://www.kaggle.com/datasets/psparks/instacart-market-basket-analysis) into `data/instacart/` (see `data/instacart/README.md`).
+1. Download [Instacart CSVs](https://www.kaggle.com/datasets/psparks/instacart-market-basket-analysis) into `backend/data/instacart/` (see `backend/data/instacart/README.md`).
 2. Import:
 
 ```bash
@@ -159,52 +159,28 @@ LLM output is **untrusted**. Before execution:
 6. **Forced `LIMIT`** (default 1000, max 5000)
 7. **`BEGIN READ ONLY`** + 5s statement timeout in `lib/db.ts`
 
-Optional: create a read-only role with `db/roles.sql` (adjust database name for Supabase: `postgres`).
+Optional: create a read-only role with `backend/db/roles.sql` (adjust database name for Supabase: `postgres`).
 
 ## Project structure
 
 ```
 vocallytics/
-├── app/
-│   ├── api/
-│   │   ├── transcribe/route.ts   Speech → text (Whisper)
-│   │   ├── nl2sql/route.ts       Text → SQL + chart spec (Claude)
-│   │   └── query/route.ts        Validated read-only SQL execution
-│   ├── layout.tsx                Next.js root layout (fonts, metadata)
-│   └── page.tsx                  Re-exports main UI from `frontend/`
-├── frontend/
-│   ├── pages/Home.tsx            Main UI
-│   ├── components/
-│   │   ├── MicButton.tsx         Voice capture + waveform
-│   │   ├── Chart.tsx             Plotly renderer
-│   │   ├── SqlPanel.tsx          SQL display
-│   │   ├── ExamplePrompts.tsx    Canned questions
-│   │   └── plotly.ts             Client-only Plotly bundle
-│   ├── styles/globals.css
-│   └── types/
-├── lib/
-│   ├── schema.ts                 DB catalog + glossary (LLM)
-│   ├── sql-guard.ts              SELECT-only validation
-│   ├── sql-guard.test.ts
-│   ├── anthropic.ts              Claude client + prompt
-│   ├── stt.ts                    Speech-to-text abstraction
-│   ├── db.ts                     Postgres pool
-│   └── types.ts                  Shared Zod schemas
-├── db/
-│   ├── schema.sql                Instacart DDL + summary tables
-│   ├── summary-tables.sql        Add summaries to existing DB
-│   ├── schema-synthetic.sql      Legacy demo schema (optional)
-│   ├── seed.sql                  Legacy reference seed
-│   └── roles.sql                 Read-only Postgres role
-├── scripts/
-│   ├── import-instacart.ts       Bulk COPY import
-│   ├── build-summaries.ts        Rebuild rollup tables
-│   └── seed-synthetic.ts         Legacy synthetic dataset
-├── data/instacart/               Kaggle CSVs (gitignored; see README inside)
-├── .github/workflows/ci.yml   GitHub Actions (typecheck, test, lint, build)
-├── .env.example
-├── package.json
-└── README.md
+├── .env.example                  Copy to .env.local for secrets
+├── README.md
+├── .gitignore
+├── package.json                  npm / Next.js entry (required at repo root)
+├── app/                          Next.js routes (API + thin page shells)
+│   ├── api/                      transcribe, nl2sql, query
+│   ├── layout.tsx
+│   └── page.tsx
+├── frontend/                     UI (pages, components, styles)
+├── backend/
+│   ├── lib/                      SQL guard, schema, Claude, DB, types
+│   ├── db/                       SQL schemas and roles
+│   ├── scripts/                  Import and seed scripts
+│   └── data/instacart/           Kaggle CSVs (gitignored)
+├── config/                       Tailwind, ESLint, Vitest
+└── .github/workflows/ci.yml
 ```
 
 ## Deploying (Vercel + Supabase)
@@ -222,7 +198,7 @@ Supabase ran out of disk during a heavy query.
 
 1. Check usage in **Project Settings → Database**.
 2. Free space: `TRUNCATE order_items;` or re-import with `--items=train`.
-3. Run `db/summary-tables.sql` in the SQL editor, then `npm run build:summaries`.
+3. Run `backend/db/summary-tables.sql` in the SQL editor, then `npm run build:summaries`.
 4. Prefer questions that hit `summary_*` tables (e.g. “orders by day of week”).
 
 ### Empty chart / wrong axis

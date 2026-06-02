@@ -14,7 +14,7 @@ yarn-error.log*
 next-env.d.ts
 coverage
 
-data/instacart/*.csv
+backend/data/instacart/*.csv
 
 .cursor/
 .cursorrules

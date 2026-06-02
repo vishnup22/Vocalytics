@@ -8,11 +8,11 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "seed": "tsx scripts/import-instacart.ts",
-    "seed:synthetic": "tsx scripts/seed-synthetic.ts",
-    "import:instacart": "tsx scripts/import-instacart.ts",
-    "build:summaries": "tsx scripts/build-summaries.ts",
-    "test": "vitest run"
+    "seed": "tsx backend/scripts/import-instacart.ts",
+    "seed:synthetic": "tsx backend/scripts/seed-synthetic.ts",
+    "import:instacart": "tsx backend/scripts/import-instacart.ts",
+    "build:summaries": "tsx backend/scripts/build-summaries.ts",
+    "test": "vitest run --config config/vitest.config.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

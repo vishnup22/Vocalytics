@@ -73,8 +73,11 @@ async function main() {
   await client.connect();
   console.log("Connected. Building schema + reference data...");
 
-  const schemaSql = readFileSync(join(process.cwd(), "db", "schema-synthetic.sql"), "utf8");
-  const seedSql = readFileSync(join(process.cwd(), "db", "seed.sql"), "utf8");
+  const schemaSql = readFileSync(
+    join(process.cwd(), "backend", "db", "schema-synthetic.sql"),
+    "utf8"
+  );
+  const seedSql = readFileSync(join(process.cwd(), "backend", "db", "seed.sql"), "utf8");
   await client.query(schemaSql);
   await client.query(seedSql);
 

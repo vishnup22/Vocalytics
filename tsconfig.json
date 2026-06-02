@@ -16,7 +16,8 @@
     "plugins": [{ "name": "next" }],
     "paths": {
       "@/*": ["./*"],
-      "@/frontend/*": ["./frontend/*"]
+      "@/frontend/*": ["./frontend/*"],
+      "@/lib/*": ["./backend/lib/*"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
