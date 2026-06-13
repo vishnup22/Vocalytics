@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 const KEYWORDS =
-  /\b(SELECT|FROM|WHERE|GROUP BY|ORDER BY|HAVING|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|ON|AS|AND|OR|NOT|LIMIT|OFFSET|SUM|COUNT|AVG|MIN|MAX|ROUND|DATE_TRUNC|CASE|WHEN|THEN|ELSE|END|DESC|ASC|IN|BETWEEN|IS|NULL)\b/gi;
+  /\b(SELECT|FROM|WHERE|GROUP BY|ORDER BY|HAVING|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|ON|AS|AND|OR|NOT|LIMIT|OFFSET|SUM|COUNT|AVG|MIN|MAX|ROUND|CASE|WHEN|THEN|ELSE|END|DESC|ASC|IN|BETWEEN|IS|NULL)\b/gi;
 
 function highlight(sql: string): string {
   const escaped = sql
@@ -40,7 +40,7 @@ export default function SqlPanel({ sql }: { sql: string }) {
           <div className="flex items-center gap-2">
             <span className="font-mono text-xs text-slate-500">query.sql</span>
             <span className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-400">
-              validated · read-only
+              validated / read-only
             </span>
           </div>
         </div>

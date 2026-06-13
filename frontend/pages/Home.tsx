@@ -1,27 +1,46 @@
 "use client";
 
-import { useState } from "react";
-import type { ChartSpec, Nl2SqlResult, QueryResult } from "@/lib/types";
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import type {
+  ChartSpec,
+  ConversationTurn,
+  InsightResult,
+  Nl2SqlResult,
+  QueryResult,
+} from "@/lib/types";
+import { dataset } from "@/lib/dataset";
 import Chart from "@/frontend/components/Chart";
 import SqlPanel from "@/frontend/components/SqlPanel";
 import ExamplePrompts from "@/frontend/components/ExamplePrompts";
 import MicButton from "@/frontend/components/MicButton";
 
-type Phase = "idle" | "transcribing" | "thinking" | "querying" | "done";
+type Phase = "idle" | "transcribing" | "thinking" | "querying" | "insighting" | "done";
 
 interface Resolved {
   question: string;
   sql: string;
   chart: ChartSpec;
   explanation: string;
+  insight: string | null;
+  validationWarnings: string[];
+  schemaTables: string[];
   result: QueryResult;
 }
 
+interface DatasetSummary {
+  id: string;
+  name: string;
+  createdAt?: string;
+  rowCount?: number;
+  columns?: string[];
+}
+
 const PIPELINE = [
-  { key: "transcribing", label: "Listen", icon: "🎙" },
-  { key: "thinking", label: "Generate SQL", icon: "✨" },
-  { key: "querying", label: "Query DB", icon: "⚡" },
-  { key: "done", label: "Visualize", icon: "📊" },
+  { key: "thinking", label: "SQL" },
+  { key: "querying", label: "Query" },
+  { key: "insighting", label: "Insight" },
+  { key: "done", label: "Chart" },
 ] as const;
 
 export default function Home() {
@@ -30,8 +49,64 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [clarification, setClarification] = useState<string | null>(null);
   const [resolved, setResolved] = useState<Resolved | null>(null);
+  const [history, setHistory] = useState<ConversationTurn[]>([]);
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
+  const [datasetId, setDatasetId] = useState(dataset.id);
+  const [uploading, setUploading] = useState(false);
 
   const busy = phase !== "idle" && phase !== "done";
+  const activeDataset =
+    datasets.find((item) => item.id === datasetId) ?? datasets[0];
+  const starterQuestions =
+    activeDataset?.id && activeDataset.id !== dataset.id && activeDataset.columns?.length
+      ? activeDataset.columns.slice(0, 5).map((column) => ({
+          text: `Count rows by ${column}`,
+          tag: "Group",
+        }))
+      : dataset.exampleQuestions;
+
+  useEffect(() => {
+    void refreshDatasets();
+  }, []);
+
+  async function refreshDatasets() {
+    try {
+      const res = await fetch("/api/datasets");
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.datasets)) {
+        setDatasets(data.datasets);
+        if (!data.datasets.some((item: DatasetSummary) => item.id === datasetId)) {
+          setDatasetId(data.datasets[0]?.id ?? dataset.id);
+        }
+      }
+    } catch {
+      void 0;
+    }
+  }
+
+  async function uploadDataset(file: File | null) {
+    if (!file || uploading) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/datasets", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Dataset upload failed.");
+        return;
+      }
+      await refreshDatasets();
+      setDatasetId(data.dataset.id);
+      setHistory([]);
+      setResolved(null);
+    } catch {
+      setError("Dataset upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  }
 
   function reset() {
     setError(null);
@@ -50,7 +125,11 @@ export default function Home() {
       const nlRes = await fetch("/api/nl2sql", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: trimmed }),
+        body: JSON.stringify({
+          question: trimmed,
+          context: history.slice(-4),
+          datasetId,
+        }),
       });
       const nl: Nl2SqlResult & { error?: string } = await nlRes.json();
       if (!nlRes.ok) {
@@ -59,9 +138,12 @@ export default function Home() {
         return;
       }
       if (nl.needsClarification || !nl.sql || !nl.chart) {
-        setClarification(
+        const message =
           nl.clarificationQuestion ??
-            "Could you rephrase that with a specific metric and time range?"
+          `Could you rephrase that with a specific ${dataset.name} metric?`;
+        setClarification(message);
+        setHistory((items) =>
+          [...items, { question: trimmed, sql: null, summary: message }].slice(-6)
         );
         setPhase("done");
         return;
@@ -71,7 +153,7 @@ export default function Home() {
       const qRes = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sql: nl.sql }),
+        body: JSON.stringify({ sql: nl.sql, datasetId }),
       });
       const qData: QueryResult & { error?: string } = await qRes.json();
       if (!qRes.ok) {
@@ -81,19 +163,60 @@ export default function Home() {
           sql: nl.sql,
           chart: nl.chart,
           explanation: nl.explanation,
+          insight: null,
+          validationWarnings: nl.validationWarnings ?? [],
+          schemaTables: nl.schemaTables ?? [],
           result: { columns: [], rows: [], rowCount: 0 },
         });
         setPhase("done");
         return;
       }
 
-      setResolved({
+      let insight: string | null = null;
+      if (qData.rows.length > 0) {
+        setPhase("insighting");
+        try {
+          const iRes = await fetch("/api/insight", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              question: trimmed,
+              sql: nl.sql,
+              chart: nl.chart,
+              columns: qData.columns,
+              rows: qData.rows.slice(0, 100),
+            }),
+          });
+          const iData: InsightResult & { error?: string } = await iRes.json();
+          if (iRes.ok) insight = iData.insight;
+        } catch {
+          insight = null;
+        }
+      }
+
+      const nextResolved = {
         question: trimmed,
         sql: nl.sql,
         chart: nl.chart,
         explanation: nl.explanation,
+        insight,
+        validationWarnings: nl.validationWarnings ?? [],
+        schemaTables: nl.schemaTables ?? [],
         result: qData,
-      });
+      };
+      setResolved(nextResolved);
+      setHistory((items) =>
+        [
+          ...items,
+          {
+            question: trimmed,
+            sql: nl.sql,
+            chartTitle: nl.chart?.title,
+            columns: qData.columns,
+            summary: insight ?? nl.explanation,
+          },
+        ].slice(-6)
+      );
       setPhase("done");
     } catch {
       setError("Something went wrong. Please try again.");
@@ -102,231 +225,373 @@ export default function Home() {
   }
 
   const activeStep =
-    phase === "transcribing"
+    phase === "thinking"
       ? 0
-      : phase === "thinking"
-      ? 1
       : phase === "querying"
+      ? 1
+      : phase === "insighting"
       ? 2
       : phase === "done" && resolved
       ? 3
       : -1;
 
   return (
-    <main className="relative mx-auto flex min-h-screen max-w-5xl flex-col gap-8 px-4 py-8 sm:px-6 sm:py-12">
-      <header className="animate-fade-in-up text-center">
-        <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs font-medium text-slate-400 backdrop-blur">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-          </span>
-          Instacart · Voice-to-SQL · Read-only
+    <main className="min-h-screen bg-[#f6f7f9] text-slate-950">
+      <header className="border-b border-slate-200 bg-white/90">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-5 py-4 sm:px-8">
+          <div>
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-950 font-mono text-xs font-semibold text-white">
+                VL
+              </div>
+              <div>
+                <h1 className="text-lg font-semibold tracking-normal text-slate-950">
+                  VocalLytics
+                </h1>
+                <p className="text-xs text-slate-500">
+                  Voice analytics for {dataset.name}
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <StatusDot label="SQL guarded" />
+            <StatusDot label="Read-only" />
+            <StatusDot label="Sample ready" />
+          </div>
         </div>
-        <h1 className="gradient-text text-5xl font-extrabold tracking-tight sm:text-6xl">
-          VocalLytics
-        </h1>
-        <p className="mx-auto mt-4 max-w-xl text-base leading-relaxed text-slate-400 sm:text-lg">
-          Ask a business question by voice or text. Get an interactive chart — and
-          the exact SQL behind it.
-        </p>
       </header>
 
-      <section className="card animate-fade-in-up p-6 sm:p-8" style={{ animationDelay: "80ms" }}>
-        <MicButton
-          onTranscript={(t) => ask(t)}
-          onError={(m) => {
-            setError(m);
-            setPhase("done");
-          }}
-          disabled={busy}
-        />
+      <div className="mx-auto grid max-w-7xl gap-6 px-5 py-6 sm:px-8 lg:grid-cols-[360px_1fr]">
+        <aside className="space-y-4">
+          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Dataset
+            </p>
+            <select
+              value={datasetId}
+              onChange={(event) => {
+                setDatasetId(event.target.value);
+                setHistory([]);
+                setResolved(null);
+              }}
+              className="mt-3 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
+            >
+              {datasets.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+            <label className="mt-3 flex cursor-pointer items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+              {uploading ? "Uploading..." : "Upload CSV"}
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                disabled={uploading}
+                onChange={(event) => {
+                  void uploadDataset(event.target.files?.[0] ?? null);
+                  event.currentTarget.value = "";
+                }}
+              />
+            </label>
+            {activeDataset && (
+              <p className="mt-3 text-xs leading-relaxed text-slate-500">
+                {typeof activeDataset.rowCount === "number"
+                  ? `${activeDataset.rowCount} rows`
+                  : "Configured database dataset"}
+              </p>
+            )}
+          </section>
 
-        <div className="my-6 flex items-center gap-3">
-          <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
-          <span className="text-xs font-medium uppercase tracking-widest text-slate-600">
-            or type
-          </span>
-          <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
-        </div>
+          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Ask a question
+              </p>
+              <p className="mt-1 text-sm text-slate-600">
+                Use voice or type a metric-focused question.
+              </p>
+            </div>
 
-        <form
-          className="flex flex-col gap-3 sm:flex-row"
-          onSubmit={(e) => {
-            e.preventDefault();
-            ask(question);
-          }}
-        >
-          <div className="gradient-border flex-1">
-            <input
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              placeholder="e.g. Top 10 departments by items ordered"
-              className="w-full rounded-[15px] bg-[#0a0f1e]/90 px-4 py-3.5 text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+            <MicButton
+              onTranscript={(t) => ask(t)}
+              onError={(m) => {
+                setError(m);
+                setPhase("done");
+              }}
               disabled={busy}
             />
-          </div>
-          <button
-            type="submit"
-            disabled={busy || !question.trim()}
-            className="group relative overflow-hidden rounded-xl bg-gradient-to-r from-indigo-500 via-violet-500 to-cyan-500 px-8 py-3.5 font-semibold text-white shadow-glow transition hover:scale-[1.02] hover:shadow-glow-cyan disabled:scale-100 disabled:opacity-40"
-          >
-            <span className="relative z-10 flex items-center justify-center gap-2">
-              {busy ? (
-                <>
-                  <span className="h-4 w-4 animate-spin-slow rounded-full border-2 border-white/30 border-t-white" />
-                  Working…
-                </>
-              ) : (
-                <>
-                  Ask
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M5 12h14M13 6l6 6-6 6" />
-                  </svg>
-                </>
-              )}
-            </span>
-          </button>
-        </form>
 
-        <div className="mt-8">
-          <ExamplePrompts onPick={(q) => ask(q)} disabled={busy} />
-        </div>
-      </section>
+            <form
+              className="mt-5 space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                ask(question);
+              }}
+            >
+              <textarea
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                placeholder={
+                  activeDataset?.columns?.[0]
+                    ? `Count rows by ${activeDataset.columns[0]}`
+                    : dataset.exampleQuestions[0]?.text ?? "Ask a question"
+                }
+                className="min-h-24 w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
+                disabled={busy}
+              />
+              <button
+                type="submit"
+                disabled={busy || !question.trim()}
+                className="flex w-full items-center justify-center rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {busy ? "Working..." : "Run analysis"}
+              </button>
+            </form>
+          </section>
 
-      {busy && (
-        <div className="card animate-scale-in p-5">
-          <div className="flex items-center justify-between gap-2 sm:gap-4">
-            {PIPELINE.map((step, i) => {
-              const active = i === activeStep;
-              const done = i < activeStep;
-              return (
-                <div key={step.key} className="flex flex-1 flex-col items-center gap-2">
-                  <div
-                    className={`flex h-10 w-10 items-center justify-center rounded-xl text-lg transition-all duration-500 ${
-                      active
-                        ? "scale-110 bg-gradient-to-br from-indigo-500 to-cyan-500 shadow-glow"
-                        : done
-                        ? "bg-emerald-500/20 text-emerald-400"
-                        : "bg-white/5 text-slate-600"
-                    }`}
-                  >
-                    {done ? "✓" : step.icon}
-                  </div>
-                  <span
-                    className={`hidden text-center text-[10px] font-medium uppercase tracking-wide sm:block ${
-                      active ? "text-indigo-300" : done ? "text-emerald-400/80" : "text-slate-600"
-                    }`}
-                  >
-                    {step.label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-4 text-center text-sm text-slate-400">
-            {phase === "transcribing" && "Transcribing your question…"}
-            {phase === "thinking" && "Claude is generating schema-grounded SQL…"}
-            {phase === "querying" && "Running validated query on Postgres…"}
-          </p>
-        </div>
-      )}
+          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <ExamplePrompts
+              onPick={(q) => ask(q)}
+              disabled={busy}
+              items={starterQuestions}
+            />
+          </section>
 
-      {clarification && (
-        <div className="animate-fade-in-up rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5 backdrop-blur">
-          <div className="flex items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/20 text-lg">
-              💡
-            </span>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-amber-400">
-                Needs clarification
-              </p>
-              <p className="mt-1 text-slate-200">{clarification}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="animate-fade-in-up rounded-2xl border border-red-500/30 bg-red-500/5 p-5 backdrop-blur">
-          <div className="flex items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-500/20 text-lg">
-              ⚠️
-            </span>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-widest text-red-400">
-                Something needs attention
-              </p>
-              <p className="mt-1 text-slate-200">{error}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {resolved && (
-        <section className="flex animate-fade-in-up flex-col gap-6">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-widest text-slate-500">
-                Your question
-              </p>
-              <p className="mt-1 text-lg font-medium text-slate-100">
-                &ldquo;{resolved.question}&rdquo;
-              </p>
-            </div>
-            {resolved.result.rowCount > 0 && (
-              <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
-                {resolved.result.rowCount} rows
-              </span>
-            )}
-          </div>
-
-          <div className="card overflow-hidden p-1">
-            <div className="rounded-[14px] bg-[#0a0f1e]/50 p-2 sm:p-4">
-              {resolved.chart.title && (
-                <h2 className="mb-2 px-2 text-center text-sm font-medium text-slate-400">
-                  {resolved.chart.title}
-                </h2>
-              )}
-              {resolved.result.rows.length > 0 ? (
-                <Chart spec={resolved.chart} rows={resolved.result.rows} />
-              ) : (
-                <p className="p-12 text-center text-slate-500">
-                  No data to chart for this question.
+          {history.length > 0 && (
+            <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Recent context
                 </p>
+                <button
+                  className="text-xs font-medium text-slate-500 hover:text-slate-950"
+                  onClick={() => setHistory([])}
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {history.slice(-4).map((turn, i) => (
+                  <div
+                    key={`${turn.question}-${i}`}
+                    className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-700"
+                  >
+                    {turn.question}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </aside>
+
+        <section className="space-y-4">
+          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Analysis workspace
+                </p>
+                <h2 className="mt-1 text-xl font-semibold tracking-normal text-slate-950">
+                  {resolved ? resolved.chart.title || "Query result" : "Ready to analyze"}
+                </h2>
+              </div>
+              {(busy || resolved) && (
+                <div className="flex items-center gap-2">
+                  {PIPELINE.map((step, i) => (
+                    <StepPill
+                      key={step.key}
+                      label={step.label}
+                      active={i === activeStep}
+                      done={i < activeStep || (phase === "done" && !!resolved)}
+                    />
+                  ))}
+                </div>
               )}
             </div>
           </div>
 
-          {resolved.explanation && (
-            <div className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 backdrop-blur">
-              <span className="mt-0.5 text-lg">💬</span>
-              <p className="text-slate-300 leading-relaxed">{resolved.explanation}</p>
+          {clarification && (
+            <Notice tone="amber" title="Clarification needed" message={clarification} />
+          )}
+
+          {error && (
+            <Notice tone="red" title="Needs attention" message={error} />
+          )}
+
+          {!resolved && !busy && !clarification && !error && (
+            <div className="grid gap-4 md:grid-cols-3">
+              <EmptyMetric label="Available metrics" value="Orders, items, reorder rate" />
+              <EmptyMetric label="Dataset" value={activeDataset?.name ?? dataset.name} />
+              <EmptyMetric label="Runtime" value="Guarded SQL" />
             </div>
           )}
 
-          <SqlPanel sql={resolved.sql} />
-        </section>
-      )}
+          {busy && (
+            <div className="rounded-lg border border-slate-200 bg-white p-8 text-center shadow-sm">
+              <div className="mx-auto h-8 w-8 animate-spin-slow rounded-full border-2 border-slate-200 border-t-slate-950" />
+              <p className="mt-4 text-sm font-medium text-slate-700">
+                {phase === "thinking" && "Generating SQL"}
+                {phase === "querying" && "Running the guarded query"}
+                {phase === "insighting" && "Summarizing the result"}
+              </p>
+            </div>
+          )}
 
-      <footer className="mt-auto flex flex-wrap items-center justify-center gap-4 pb-6 pt-4 text-center text-xs text-slate-600">
-        <span className="flex items-center gap-1.5">
-          <ShieldIcon />
-          Read-only SQL
-        </span>
-        <span className="hidden h-3 w-px bg-white/10 sm:block" />
-        <span>Table allowlist enforced</span>
-        <span className="hidden h-3 w-px bg-white/10 sm:block" />
-        <span>5s statement timeout</span>
-      </footer>
+          {resolved && (
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                <Metric label="Rows" value={String(resolved.result.rowCount)} />
+                <Metric
+                  label="Latency"
+                  value={
+                    typeof resolved.result.latencyMs === "number"
+                      ? `${resolved.result.latencyMs} ms`
+                      : "n/a"
+                  }
+                />
+                <Metric
+                  label="Source"
+                  value={resolved.result.demo ? "Sample data" : "Postgres"}
+                />
+              </div>
+
+              {(resolved.schemaTables.length > 0 ||
+                resolved.validationWarnings.length > 0 ||
+                resolved.result.warning) && (
+                <div className="rounded-lg border border-slate-200 bg-white px-5 py-4 text-sm shadow-sm">
+                  {resolved.schemaTables.length > 0 && (
+                    <p className="text-slate-600">
+                      Retrieved schema:{" "}
+                      <span className="font-medium text-slate-900">
+                        {resolved.schemaTables.join(", ")}
+                      </span>
+                    </p>
+                  )}
+                  {resolved.validationWarnings.length > 0 && (
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-amber-700">
+                      {resolved.validationWarnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {resolved.result.warning && (
+                    <p className="mt-3 text-slate-500">{resolved.result.warning}</p>
+                  )}
+                </div>
+              )}
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                {resolved.result.rows.length > 0 ? (
+                  <Chart spec={resolved.chart} rows={resolved.result.rows} />
+                ) : (
+                  <p className="p-12 text-center text-slate-500">
+                    No data to chart for this question.
+                  </p>
+                )}
+              </div>
+
+              {(resolved.insight || resolved.explanation) && (
+                <div className="rounded-lg border border-slate-200 bg-white px-5 py-4 shadow-sm">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Analyst note
+                  </p>
+                  {resolved.insight && (
+                    <p className="mt-2 text-sm leading-relaxed text-slate-900">
+                      {resolved.insight}
+                    </p>
+                  )}
+                  {resolved.explanation && (
+                    <p className="mt-2 text-xs leading-relaxed text-slate-500">
+                      {resolved.explanation}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <SqlPanel sql={resolved.sql} />
+            </div>
+          )}
+        </section>
+      </div>
     </main>
   );
 }
 
-function ShieldIcon() {
+function StatusDot({ label }: { label: string }) {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-    </svg>
+    <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      {label}
+    </span>
+  );
+}
+
+function StepPill({
+  label,
+  active,
+  done,
+}: {
+  label: string;
+  active: boolean;
+  done: boolean;
+}) {
+  return (
+    <span
+      className={`rounded-full border px-3 py-1 text-xs font-medium ${
+        active
+          ? "border-slate-950 bg-slate-950 text-white"
+          : done
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+          : "border-slate-200 bg-slate-50 text-slate-500"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white px-5 py-4 shadow-sm">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
+      <p className="mt-2 text-lg font-semibold text-slate-950">{value}</p>
+    </div>
+  );
+}
+
+function EmptyMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-slate-300 bg-white/70 px-5 py-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
+      <p className="mt-2 text-sm font-medium text-slate-700">{value}</p>
+    </div>
+  );
+}
+
+function Notice({
+  tone,
+  title,
+  message,
+}: {
+  tone: "amber" | "red";
+  title: string;
+  message: string;
+}) {
+  const styles =
+    tone === "amber"
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : "border-red-200 bg-red-50 text-red-900";
+  return (
+    <div className={`rounded-lg border px-5 py-4 shadow-sm ${styles}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide">{title}</p>
+      <p className="mt-1 text-sm">{message}</p>
+    </div>
   );
 }

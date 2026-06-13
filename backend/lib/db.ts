@@ -31,6 +31,28 @@ export interface ReadOnlyResult {
   rowCount: number;
 }
 
+export async function explainReadOnly(sql: string): Promise<number | null> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query("SET LOCAL statement_timeout = '3s'");
+    const result = await client.query(`EXPLAIN (FORMAT JSON) ${sql}`);
+    await client.query("COMMIT");
+    const plan = result.rows[0]?.["QUERY PLAN"]?.[0]?.Plan;
+    const cost = plan?.["Total Cost"];
+    return typeof cost === "number" ? cost : null;
+  } catch {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      void 0;
+    }
+    return null;
+  } finally {
+    client.release();
+  }
+}
+
 export async function runReadOnly(sql: string): Promise<ReadOnlyResult> {
   const client = await getPool().connect();
   try {

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 type RecState = "idle" | "recording" | "transcribing";
 
-const BAR_COUNT = 24;
+const BAR_COUNT = 16;
 
 export default function MicButton({
   onTranscript,
@@ -138,89 +138,73 @@ export default function MicButton({
     }
   }
 
+  const recording = state === "recording";
   const label =
     state === "recording"
-      ? "Tap to stop"
+      ? "Stop recording"
       : state === "transcribing"
-      ? "Transcribing…"
-      : "Tap to speak";
-
-  const recording = state === "recording";
+      ? "Transcribing"
+      : "Voice input";
 
   return (
-    <div className="flex flex-col items-center gap-3">
-      <div className="relative flex h-28 w-28 items-center justify-center">
-        {!recording && state !== "transcribing" && (
-          <span className="absolute inset-0 rounded-full border border-dashed border-white/15 animate-[spin-slow_8s_linear_infinite]" />
-        )}
-        {recording && (
-          <div className="absolute inset-0 flex items-center justify-center gap-[2px]">
-            {levels.map((lvl, i) => (
-              <span
-                key={i}
-                className="wave-bar"
-                style={{
-                  height: `${20 + lvl * 60}%`,
-                  animationDelay: `${i * 0.04}s`,
-                  opacity: 0.5 + lvl * 0.5,
-                }}
-              />
-            ))}
-          </div>
-        )}
-
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-slate-900">{label}</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {recording ? "Listening now" : "Optional microphone input"}
+          </p>
+        </div>
         <button
           onClick={recording ? stop : start}
           disabled={disabled || state === "transcribing"}
           aria-label={recording ? "Stop recording" : "Start recording"}
-          className={`relative z-10 flex h-20 w-20 items-center justify-center rounded-full text-white transition-all duration-300 disabled:opacity-50 ${
+          className={`flex h-11 w-11 items-center justify-center rounded-lg border text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
             recording
-              ? "recording-pulse scale-95 bg-gradient-to-br from-red-500 to-rose-600"
-              : state === "transcribing"
-              ? "bg-gradient-to-br from-indigo-500 to-cyan-500"
-              : "mic-breathe bg-gradient-to-br from-indigo-500 via-violet-500 to-cyan-500 hover:scale-105"
+              ? "border-red-200 bg-red-600 text-white"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
           }`}
         >
           {state === "transcribing" ? (
-            <span className="h-7 w-7 animate-spin-slow rounded-full border-2 border-white/30 border-t-white" />
+            <span className="h-4 w-4 animate-spin-slow rounded-full border-2 border-slate-300 border-t-slate-900" />
+          ) : recording ? (
+            <StopIcon />
           ) : (
-            <MicIcon active={recording} />
+            <MicIcon />
           )}
         </button>
       </div>
-      <span
-        className={`text-sm font-medium tracking-wide transition-colors ${
-          recording ? "text-rose-300" : "text-slate-400"
-        }`}
-      >
-        {label}
-      </span>
+
+      {recording && (
+        <div className="mt-4 flex h-8 items-end gap-1">
+          {levels.map((lvl, i) => (
+            <span
+              key={i}
+              className="w-1 rounded-full bg-slate-400"
+              style={{ height: `${20 + lvl * 70}%`, opacity: 0.45 + lvl * 0.4 }}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function MicIcon({ active }: { active: boolean }) {
+function MicIcon() {
   return (
-    <svg
-      width="30"
-      height="30"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {active ? (
-        <rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor" />
-      ) : (
-        <>
-          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-          <line x1="12" y1="19" x2="12" y2="23" />
-          <line x1="8" y1="23" x2="16" y2="23" />
-        </>
-      )}
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <line x1="12" y1="19" x2="12" y2="23" />
+      <line x1="8" y1="23" x2="16" y2="23" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="6" y="6" width="12" height="12" rx="2" />
     </svg>
   );
 }

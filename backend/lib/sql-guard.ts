@@ -1,20 +1,9 @@
 import { Parser } from "node-sql-parser";
+import { allowedTables, dataset, type DatasetConfig } from "@/lib/dataset";
 
 const PARSER_OPT = { database: "PostgresQL" } as const;
 
-export const ALLOWED_TABLES = [
-  "departments",
-  "aisles",
-  "products",
-  "orders",
-  "order_items",
-  "summary_orders_by_dow",
-  "summary_orders_by_hour",
-  "summary_department_stats",
-  "summary_product_stats",
-] as const;
-
-const ALLOWED_TABLE_SET = new Set<string>(ALLOWED_TABLES);
+export const ALLOWED_TABLES = allowedTables;
 
 const DENY_KEYWORDS = [
   "insert",
@@ -32,14 +21,33 @@ const DENY_KEYWORDS = [
 
 const MAX_LIMIT = 5000;
 const DEFAULT_LIMIT = 1000;
+const MAX_JOINS = 5;
+
+const ALLOWED_FUNCTIONS = new Set([
+  "avg",
+  "case",
+  "cast",
+  "ceil",
+  "coalesce",
+  "count",
+  "floor",
+  "lower",
+  "max",
+  "min",
+  "nullif",
+  "round",
+  "sum",
+  "upper",
+]);
 
 export type GuardResult =
-  | { ok: true; safeSql: string }
+  | { ok: true; safeSql: string; tables: string[]; complexity: { joins: number } }
   | { ok: false; reason: string };
 
 const parser = new Parser();
 
-export function guardSql(input: string): GuardResult {
+export function guardSql(input: string, config: DatasetConfig = dataset): GuardResult {
+  const allowedTableSet = new Set(config.tables.map((table) => table.name));
   const raw = (input ?? "").trim();
   if (!raw) return { ok: false, reason: "Empty SQL." };
 
@@ -59,6 +67,26 @@ export function guardSql(input: string): GuardResult {
   }
   if (/information_schema/i.test(withoutTrailingSemicolon)) {
     return { ok: false, reason: "Access to information_schema is not allowed." };
+  }
+  if (/\bselect\s+\*/i.test(withoutTrailingSemicolon)) {
+    return { ok: false, reason: "SELECT * is not allowed; select explicit columns." };
+  }
+  if (/\bcross\s+join\b/i.test(withoutTrailingSemicolon)) {
+    return { ok: false, reason: "CROSS JOIN is not allowed." };
+  }
+
+  const joins = (withoutTrailingSemicolon.match(/\bjoin\b/gi) ?? []).length;
+  if (joins > MAX_JOINS) {
+    return { ok: false, reason: `Too many joins; maximum is ${MAX_JOINS}.` };
+  }
+
+  const functionNames =
+    withoutTrailingSemicolon.match(/\b[a-zA-Z_][a-zA-Z0-9_]*\s*\(/g) ?? [];
+  for (const fn of functionNames) {
+    const name = fn.replace(/\s*\($/, "").toLowerCase();
+    if (!ALLOWED_FUNCTIONS.has(name)) {
+      return { ok: false, reason: `Function not allowed: ${name}.` };
+    }
   }
 
   let ast: unknown;
@@ -84,13 +112,15 @@ export function guardSql(input: string): GuardResult {
   } catch {
     return { ok: false, reason: "Could not analyze tables." };
   }
+  const tables: string[] = [];
   for (const entry of tableList) {
     const parts = entry.split("::");
     const table = parts[parts.length - 1];
     if (table === "null") continue;
-    if (!ALLOWED_TABLE_SET.has(table)) {
+    if (!allowedTableSet.has(table)) {
       return { ok: false, reason: `Table not allowed: ${table}.` };
     }
+    if (!tables.includes(table)) tables.push(table);
   }
 
   const limitNode = stmt.limit as
@@ -123,5 +153,5 @@ export function guardSql(input: string): GuardResult {
     return { ok: false, reason: "Could not finalize SQL." };
   }
 
-  return { ok: true, safeSql };
+  return { ok: true, safeSql, tables, complexity: { joins } };
 }

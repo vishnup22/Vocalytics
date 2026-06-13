@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "@/frontend/styles/globals.css";
 
@@ -15,7 +16,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "VocalLytics — Voice-to-SQL BI Copilot",
+  title: "VocalLytics - Voice-to-SQL BI Copilot",
   description:
     "Ask a business question out loud and get an interactive chart plus the SQL behind it.",
 };
@@ -23,7 +24,7 @@ export const metadata: Metadata = {
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <html lang="en" className={`${inter.variable} ${mono.variable}`}>

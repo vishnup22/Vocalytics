@@ -1,6 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { renderSchemaForPrompt } from "@/lib/schema";
-import { Nl2SqlResult, Nl2SqlResultSchema } from "@/lib/types";
+import { dataset, type DatasetConfig } from "@/lib/dataset";
+import { renderRelevantSchemaForPrompt } from "@/lib/schema";
+import {
+  ConversationTurn,
+  Nl2SqlResult,
+  Nl2SqlResultSchema,
+} from "@/lib/types";
 
 const MODEL = "claude-sonnet-4-20250514";
 
@@ -14,33 +19,65 @@ function getClient(): Anthropic {
   return client;
 }
 
-const SYSTEM_PROMPT = `You are a careful analytics engineer that translates a business question into ONE read-only PostgreSQL query against a fixed schema.
+function contextForPrompt(context: ConversationTurn[] = []): string {
+  if (!context.length) return "No previous turns.";
+  return context
+    .slice(-4)
+    .map((turn, i) => {
+      const columns = turn.columns?.length ? turn.columns.join(", ") : "unknown";
+      return [
+        `Turn ${i + 1}:`,
+        `question: ${turn.question}`,
+        `sql: ${turn.sql ?? "none"}`,
+        `chartTitle: ${turn.chartTitle ?? "none"}`,
+        `columns: ${columns}`,
+        `summary: ${turn.summary ?? "none"}`,
+      ].join("\n");
+    })
+    .join("\n\n");
+}
 
-${renderSchemaForPrompt()}
+function buildSystemPrompt(
+  schemaText: string,
+  context: ConversationTurn[],
+  config: DatasetConfig
+): string {
+  const unavailable = config.unavailableConcepts.join(", ") || "none";
+  const tableNames = config.tables.map((table) => table.name).join(", ");
+  return `You are a careful analytics engineer that translates a business question into ONE read-only PostgreSQL query against a fixed schema.
+
+Relevant schema:
+${schemaText}
+
+Recent conversation context:
+${contextForPrompt(context)}
 
 Hard rules:
-- Output a SINGLE SELECT statement only. NEVER emit INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, GRANT, REVOKE, COPY, MERGE, multiple statements, or trailing semicolons.
-- Only reference these tables: departments, aisles, products, orders, order_items, summary_orders_by_dow, summary_orders_by_hour, summary_department_stats, summary_product_stats. Never use pg_* catalogs or information_schema.
-- PREFER summary_* tables for charts (they are pre-aggregated): summary_orders_by_dow for day-of-week, summary_orders_by_hour for hourly patterns, summary_department_stats for department rankings/reorder rates, summary_product_stats for top products. Only scan orders/order_items when the question needs a filter summaries do not support (e.g. eval_set, order_number).
-- Only use columns that exist in the schema above. Never invent columns or calendar dates (Instacart has no order_date).
-- Use the business glossary definitions exactly (items_ordered, reorder_rate, etc. — there is no revenue).
-- Prefer readable aliases for output columns (e.g. "revenue", "quarter", "region") because they become chart axis labels.
-- Always produce results suitable for the requested chart (e.g. ordered by time for line charts).
+- Output a SINGLE SELECT statement only. Never emit INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, GRANT, REVOKE, COPY, MERGE, multiple statements, or trailing semicolons.
+- Only reference these tables: ${tableNames}. Never use pg_* catalogs or information_schema.
+- Prefer summary_* tables for charts because they are pre-aggregated.
+- Only use columns that exist in the schema above. Never invent columns.
+- Use the business glossary definitions exactly. Unavailable concepts for this dataset: ${unavailable}.
+- Prefer readable aliases for output columns, such as "department", "items_ordered", "reorder_rate", "day_name", or "order_count".
+- Always produce results suitable for the requested chart.
+- If the user asks a follow-up such as "that", "those", "now", or "instead", use recent conversation context to infer the prior metric or slice.
 
 Chart guidance:
-- type: "line" for trends over time, "bar" for categorical comparisons/rankings, "pie" for share-of-total, "scatter" for correlation, "table" when a chart doesn't fit.
-- x = the column for the x-axis (or category), y = the numeric measure column, series = an optional grouping column for multiple lines/bars (or null).
+- type: "line" for trends over time, "bar" for categorical comparisons/rankings, "pie" for share-of-total, "scatter" for correlation, "table" when a chart does not fit.
+- x = the column for the x-axis or category, y = the numeric measure column, series = an optional grouping column for multiple lines/bars or null.
 - Pick x/y/series to match the column aliases you SELECT.
 
 Clarification:
-- If the question is too vague to answer from this schema (e.g. "how are we doing?"), set needsClarification=true, provide a short clarificationQuestion, and set sql=null and chart=null.
+- If the question is too vague to answer from this schema, set needsClarification=true, provide a short clarificationQuestion, and set sql=null and chart=null.
+- If the user asks for unavailable metrics or dimensions, request clarification and suggest available dataset metrics.
 
 You MUST respond by calling the emit_query tool exactly once. Do not write prose outside the tool call.`;
+}
 
 const TOOL: Anthropic.Tool = {
   name: "emit_query",
   description:
-    "Return the generated SQL, a chart spec, and a one-line explanation (or a clarification request).",
+    "Return the generated SQL, a chart spec, and a one-line explanation, or a clarification request.",
   input_schema: {
     type: "object",
     properties: {
@@ -78,11 +115,24 @@ const TOOL: Anthropic.Tool = {
   },
 };
 
-export async function generateSql(question: string): Promise<Nl2SqlResult> {
+export async function generateSql(
+  question: string,
+  context: ConversationTurn[] = [],
+  config: DatasetConfig = dataset
+): Promise<Nl2SqlResult> {
+  const contextText = context
+    .map((turn) => `${turn.question} ${turn.sql ?? ""} ${turn.summary ?? ""}`)
+    .join("\n");
+  const { schemaText, tables } = renderRelevantSchemaForPrompt(
+    question,
+    contextText,
+    config
+  );
+
   const message = await getClient().messages.create({
     model: MODEL,
     max_tokens: 1024,
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(schemaText, context, config),
     tools: [TOOL],
     tool_choice: { type: "tool", name: "emit_query" },
     messages: [{ role: "user", content: question }],
@@ -101,5 +151,5 @@ export async function generateSql(question: string): Promise<Nl2SqlResult> {
       `Model output failed validation: ${parsed.error.issues[0]?.message ?? "unknown"}`
     );
   }
-  return parsed.data;
+  return { ...parsed.data, schemaTables: tables };
 }

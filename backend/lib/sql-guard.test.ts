@@ -91,4 +91,18 @@ describe("guardSql — rejects dangerous input (one per rule)", () => {
   it("rejects empty input", () => {
     expect(guardSql("   ").ok).toBe(false);
   });
+
+  it("rejects SELECT star", () => {
+    expect(guardSql("SELECT * FROM orders").ok).toBe(false);
+  });
+
+  it("rejects cross joins", () => {
+    expect(
+      guardSql("SELECT o.order_id FROM orders o CROSS JOIN products p LIMIT 10").ok
+    ).toBe(false);
+  });
+
+  it("rejects unknown functions", () => {
+    expect(guardSql("SELECT pg_sleep(1) FROM orders").ok).toBe(false);
+  });
 });

@@ -1,59 +1,36 @@
 "use client";
 
-export const EXAMPLE_QUESTIONS = [
-  {
-    text: "Orders by day of week",
-    icon: "📅",
-    tag: "Trend",
-  },
-  {
-    text: "Top 10 departments by items ordered",
-    icon: "🏆",
-    tag: "Ranking",
-  },
-  {
-    text: "Reorder rate by department",
-    icon: "🔁",
-    tag: "Insight",
-  },
-  {
-    text: "Orders per hour of day",
-    icon: "⏰",
-    tag: "Pattern",
-  },
-  {
-    text: "How are we doing?",
-    icon: "💬",
-    tag: "Clarify",
-  },
-] as const;
+import { dataset } from "@/lib/dataset";
+
+interface PromptItem {
+  text: string;
+  tag: string;
+}
 
 export default function ExamplePrompts({
   onPick,
   disabled,
+  items = dataset.exampleQuestions,
 }: {
   onPick: (q: string) => void;
   disabled?: boolean;
+  items?: PromptItem[];
 }) {
   return (
     <div className="w-full">
-      <p className="mb-3 text-center text-xs font-medium uppercase tracking-widest text-slate-500">
-        Try an example · Instacart data
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+        Starter questions
       </p>
-      <div className="flex flex-wrap justify-center gap-2">
-        {EXAMPLE_QUESTIONS.map((item, i) => (
+      <div className="mt-3 space-y-2">
+        {items.map((item) => (
           <button
             key={item.text}
             onClick={() => onPick(item.text)}
             disabled={disabled}
-            style={{ animationDelay: `${i * 60}ms` }}
-            className="group animate-fade-in-up flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-left text-sm text-slate-200 backdrop-blur transition-all duration-300 hover:-translate-y-0.5 hover:border-indigo-400/40 hover:bg-indigo-500/10 hover:shadow-glow disabled:pointer-events-none disabled:opacity-40"
+            className="flex w-full items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2.5 text-left text-sm text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50"
           >
-            <span className="text-base leading-none" aria-hidden>
-              {item.icon}
-            </span>
-            <span className="max-w-[200px] truncate sm:max-w-none">{item.text}</span>
-            <span className="hidden rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500 group-hover:text-indigo-300 sm:inline">
+            <span>{item.text}</span>
+            <span className="shrink-0 rounded bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
               {item.tag}
             </span>
           </button>

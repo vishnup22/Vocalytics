@@ -1,218 +1,201 @@
 # VocalLytics
 
-![CI](https://github.com/vishnup22/Vocalytics/actions/workflows/ci.yml/badge.svg)
-
-**Voice-to-SQL BI copilot** — ask a business question by voice or text, get an interactive chart and the exact SQL behind it.
-
-Built as a portfolio demo: schema-grounded NL→SQL, layered SQL safety, and real grocery data at scale ([Instacart Market Basket Analysis](https://www.kaggle.com/datasets/psparks/instacart-market-basket-analysis)).
+Voice-to-SQL analytics for Instacart order behavior. Users ask a question by voice or text, receive a guarded SQL query, and view the result as a chart with the underlying SQL.
 
 ## Features
 
-- **Voice or typed input** — Whisper transcription (OpenAI or Groq) plus a text fallback
-- **Schema-grounded SQL** — Claude generates a single `SELECT` from a fixed catalog (`lib/schema.ts`)
-- **Read-only execution** — `lib/sql-guard.ts` validates every query; optional read-only Postgres role
-- **Transparent results** — Plotly chart, one-line explanation, and syntax-highlighted SQL
-- **Large real dataset** — ~3.4M orders and millions of line items (configurable import size)
-- **Fast charts on hosted DB** — pre-aggregated `summary_*` tables avoid full-table scans on Supabase
+- Voice or typed input with OpenAI or Groq speech transcription
+- Schema-grounded SQL generation with structured Claude responses
+- Read-only query execution with SQL parsing and table allowlists
+- Plotly charts with the generated SQL shown alongside the result
+- Summary tables for common order, department, product, and reorder-rate views
+- Optional demo mode for local use without a live database
+- CSV upload for single-table ad hoc datasets
 
-## How it works
+## Architecture
 
 ```mermaid
 flowchart LR
-  Mic[Mic / typed question] --> STT["/api/transcribe"]
-  STT --> NL["/api/nl2sql"]
+  Input[Voice or text] --> STT["/api/transcribe"]
+  Input --> NL["/api/nl2sql"]
+  STT --> NL
   NL --> Guard["sql-guard.ts"]
-  Guard --> DB["/api/query → Postgres"]
-  DB --> UI["Chart + SQL panel"]
+  Guard --> Query["/api/query"]
+  Query --> DB["Postgres or demo rows"]
+  DB --> UI["Chart, insight, SQL"]
 ```
 
-1. Audio → `POST /api/transcribe` → `{ text }`
-2. Text → `POST /api/nl2sql` → `{ sql, chart, explanation, needsClarification }`
-3. SQL → `POST /api/query` → `{ columns, rows, rowCount }`
-4. Client renders Plotly + SQL + explanation
+The model never connects to the database. It returns a SQL string and chart spec. The application validates the SQL, applies query limits, and executes it through a read-only Postgres transaction.
 
-The LLM **never** connects to the database. It only returns a SQL string; the app validates and runs it.
+## Tech Stack
 
-## Tech stack
+| Layer | Technology |
+| --- | --- |
+| Frontend | Next.js 14, React 18, Tailwind CSS |
+| Charts | Plotly |
+| Database | PostgreSQL |
+| NL-to-SQL | Anthropic Claude |
+| Speech-to-text | OpenAI Whisper or Groq Whisper |
+| Validation | Zod, node-sql-parser |
+| Tests | Vitest |
 
-| Layer | Choice |
-|--------|--------|
-| Frontend | Next.js 14 (App Router), React 18, Tailwind CSS |
-| Charts | Plotly (`react-plotly.js`) |
-| Database | PostgreSQL (`pg`) — Supabase, Neon, or local |
-| NL→SQL | Anthropic Claude (`claude-sonnet-4-20250514`), tool-use / Zod |
-| Speech | OpenAI Whisper (`whisper-1`), swappable via `lib/stt.ts` |
-| SQL safety | `node-sql-parser`, table allowlist, forced `LIMIT` |
+## Dataset
 
-## Dataset (Instacart)
+The app targets the Instacart Market Basket Analysis dataset.
 
 | Table | Description |
-|--------|-------------|
-| `departments` | Grocery departments (produce, dairy, …) |
+| --- | --- |
+| `departments` | Grocery departments |
 | `aisles` | Aisles within the store |
-| `products` | ~50k products |
-| `orders` | ~3.4M orders (`order_dow`, `order_hour_of_day`, `eval_set`, …) |
-| `order_items` | Line items (`reordered`, `add_to_cart_order`) |
-| `summary_*` | Small rollups for fast charts (built after import) |
+| `products` | Product catalog |
+| `orders` | Order metadata |
+| `order_items` | Product line items |
+| `summary_orders_by_dow` | Orders by day of week |
+| `summary_orders_by_hour` | Orders by hour of day |
+| `summary_department_stats` | Department item volume and reorder rate |
+| `summary_product_stats` | Product item volume and reorder rate |
 
-**Note:** Instacart has **no prices or revenue**. Metrics use **items ordered**, **order counts**, and **reorder rate**. There is no calendar `order_date` — use `order_dow` (0=Sunday … 6=Saturday) or `summary_*` tables.
+Instacart does not include prices, revenue, profit, or calendar order dates. Supported metrics include order counts, item counts, basket behavior, and reorder rate.
 
-## Example questions
-
-1. **Orders by day of week**
-2. **Top 10 departments by items ordered**
-3. **Reorder rate by department**
-4. **Orders per hour of day**
-5. **How are we doing?** → clarification flow (too vague)
-
-## Quick start
+## Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
-- PostgreSQL ([Supabase](https://supabase.com) recommended)
-- API keys: [Anthropic](https://console.anthropic.com), [OpenAI](https://platform.openai.com) (for voice)
+- PostgreSQL for live data
+- Anthropic API key
+- OpenAI or Groq API key for voice input
 
-### 1. Install
+### Install
 
 ```bash
-git clone <your-repo-url>
-cd vocallytics
 npm install
 ```
 
-### 2. Environment
+### Environment
 
-```bash
-cp .env.example .env.local
-```
+Copy `.env.example` to `.env.local` and set the values you need.
 
 | Variable | Purpose |
-|----------|---------|
-| `SEED_DATABASE_URL` | Admin Postgres URL (import scripts only) |
-| `DATABASE_URL` | App runtime URL (prefer read-only role) |
-| `ANTHROPIC_API_KEY` | NL→SQL |
-| `OPENAI_API_KEY` | Whisper STT |
+| --- | --- |
+| `DATABASE_URL` | Runtime Postgres connection |
+| `SEED_DATABASE_URL` | Admin Postgres connection for import scripts |
+| `ANTHROPIC_API_KEY` | SQL generation and insight generation |
+| `OPENAI_API_KEY` | OpenAI transcription |
+| `GROQ_API_KEY` | Groq transcription |
 | `STT_PROVIDER` | `openai` or `groq` |
+| `MAX_QUERY_COST` | Maximum allowed query plan cost |
+| `DEMO_FALLBACK` | Use sample rows when the database is unavailable |
+| `DEMO_MODE` | Use sample rows without attempting a database connection |
 
-**Supabase:** use the **direct** connection string (`db.<project-ref>.supabase.co:5432`). URL-encode special characters in passwords (e.g. `@` → `%40`).
-
-### 3. Load data
-
-1. Download [Instacart CSVs](https://www.kaggle.com/datasets/psparks/instacart-market-basket-analysis) into `backend/data/instacart/` (see `backend/data/instacart/README.md`).
-2. Import:
-
-```bash
-npm run import:instacart -- --items=train
-```
-
-| Flag | Line items (approx.) | Fits Supabase free tier? |
-|------|----------------------|---------------------------|
-| `--items=train` | ~1.3M | Often yes |
-| `--items=prior` | ~32M | Usually needs Pro |
-| `--items=all` | ~34M | Usually needs Pro |
-
-Summaries are built automatically at the end of import. To rebuild later:
-
-```bash
-npm run build:summaries
-```
-
-### 4. Run the app
+### Run
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Mic works best in Chrome.
+Open `http://localhost:3000`.
 
-### 5. Verify
+## Uploaded Datasets
+
+The app supports CSV upload from the sidebar. Uploaded files are profiled locally, assigned safe column names, and stored as JSON under `backend/uploads/`. The uploaded dataset becomes selectable immediately and uses the same NL-to-SQL request flow.
+
+The upload path is intentionally scoped:
+
+- CSV only
+- One table per uploaded dataset
+- Maximum 8 MB per upload
+- Maximum 5,000 stored rows
+- Maximum 60 columns
+- Supported query shape: `SELECT` from `uploaded_rows` with optional `GROUP BY`, `ORDER BY`, and `LIMIT`
+- Supported aggregates: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`
+
+Uploaded datasets do not create database tables. They run through a constrained in-process query executor for local analysis.
+
+## Data Import
+
+Place the Instacart CSV files in `backend/data/instacart/`, then run:
 
 ```bash
-npm run typecheck
-npm test
-npm run lint
+npm run import:instacart -- --items=train
 ```
 
-## NPM scripts
+Import modes:
+
+| Flag | Approximate line items |
+| --- | --- |
+| `--items=train` | 1.3M |
+| `--items=prior` | 32M |
+| `--items=all` | 34M |
+
+Rebuild summary tables:
+
+```bash
+npm run build:summaries
+```
+
+## Replacing the Dataset
+
+Dataset-specific behavior is centralized in `backend/lib/dataset.ts`. To use a different database, replace the dataset configuration instead of editing the core API routes.
+
+Update:
+
+- `name`, `description`, and `unavailableConcepts`
+- `tables` with table names, columns, and sample rows
+- `glossary` with metric definitions and query preferences
+- `retrievalRules` for selecting relevant tables from a question
+- `exampleQuestions` for the UI
+- `evalCases` for `npm run eval:nl2sql`
+- `demoRows` for local sample responses
+
+The SQL guard reads its allowlist from this config. Schema rendering, prompt grounding, example prompts, evaluation cases, and demo-mode responses all use the same dataset definition.
+
+For a new dataset, create the database tables separately, update `DATABASE_URL`, and either write an import script for that dataset or load the data with your database tooling.
+
+## Scripts
 
 | Script | Description |
-|--------|-------------|
-| `npm run dev` | Start Next.js dev server |
-| `npm run build` | Production build |
-| `npm run import:instacart` | Bulk-load Instacart CSVs via `COPY` |
-| `npm run seed` | Alias for `import:instacart` |
-| `npm run build:summaries` | Rebuild `summary_*` rollup tables |
-| `npm run seed:synthetic` | Legacy small fake e-commerce dataset |
-| `npm test` | SQL guard unit tests |
-| `npm run typecheck` | TypeScript check |
+| --- | --- |
+| `npm run dev` | Start the development server |
+| `npm run build` | Build the production app |
+| `npm run start` | Start the production server |
+| `npm run typecheck` | Run TypeScript checks |
+| `npm test` | Run unit tests |
+| `npm run eval:nl2sql` | Run the NL-to-SQL evaluation cases |
+| `npm run import:instacart` | Import Instacart CSV files |
+| `npm run build:summaries` | Rebuild summary tables |
+| `npm run seed:synthetic` | Load the legacy synthetic dataset |
 
-## SQL safety (`lib/sql-guard.ts`)
+## SQL Safety
 
-LLM output is **untrusted**. Before execution:
+Generated SQL is treated as untrusted input. The query route validates requests with Zod, parses SQL with `node-sql-parser`, allows only one `SELECT` statement, blocks writes and catalog access, enforces a table allowlist, rejects broad query patterns, and applies a maximum row limit. Query execution uses a read-only transaction and statement timeout.
 
-1. Keyword denylist (`INSERT`, `DROP`, `pg_*`, …) with whole-word matching
-2. Single statement only (no stacked queries)
-3. Parse with `node-sql-parser` (PostgreSQL dialect)
-4. **`SELECT` only**
-5. **Table allowlist:** `departments`, `aisles`, `products`, `orders`, `order_items`, `summary_orders_by_dow`, `summary_orders_by_hour`, `summary_department_stats`, `summary_product_stats`
-6. **Forced `LIMIT`** (default 1000, max 5000)
-7. **`BEGIN READ ONLY`** + 5s statement timeout in `lib/db.ts`
+The app also supports query-cost preflight with `EXPLAIN (FORMAT JSON)` before execution.
 
-Optional: create a read-only role with `backend/db/roles.sql` (adjust database name for Supabase: `postgres`).
+## Project Structure
 
-## Project structure
-
-```
-vocallytics/
-├── .env.example                  Copy to .env.local for secrets
-├── README.md
-├── .gitignore
-├── package.json                  npm / Next.js entry (required at repo root)
-├── app/                          Next.js routes (API + thin page shells)
-│   ├── api/                      transcribe, nl2sql, query
-│   ├── layout.tsx
-│   └── page.tsx
-├── frontend/                     UI (pages, components, styles)
-├── backend/
-│   ├── lib/                      SQL guard, schema, Claude, DB, types
-│   ├── db/                       SQL schemas and roles
-│   ├── scripts/                  Import and seed scripts
-│   └── data/instacart/           Kaggle CSVs (gitignored)
-├── config/                       Tailwind, ESLint, Vitest
-└── .github/workflows/ci.yml
+```text
+app/
+  api/
+  layout.tsx
+  page.tsx
+backend/
+  data/
+  db/
+  evals/
+  lib/
+  scripts/
+config/
+frontend/
+  components/
+  pages/
+  styles/
 ```
 
-## Deploying (Vercel + Supabase)
+## Deployment
 
-1. Push to GitHub and import the repo in [Vercel](https://vercel.com).
-2. Create a Supabase project; import data locally with `SEED_DATABASE_URL`.
-3. Set Vercel env vars: `DATABASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `STT_PROVIDER`.
-4. Deploy (API routes use the Node.js runtime).
-
-## Troubleshooting
-
-### `No space left on device`
-
-Supabase ran out of disk during a heavy query.
-
-1. Check usage in **Project Settings → Database**.
-2. Free space: `TRUNCATE order_items;` or re-import with `--items=train`.
-3. Run `backend/db/summary-tables.sql` in the SQL editor, then `npm run build:summaries`.
-4. Prefer questions that hit `summary_*` tables (e.g. “orders by day of week”).
-
-### Empty chart / wrong axis
-
-Hard-refresh the page. If you switched chart types, the Plotly axis fix in `Chart.tsx` sets explicit axis types per render.
-
-### SSL errors on import
-
-Use a connection string without `?sslmode=require` if using our import scripts (SSL is configured in code). URL-encode passwords with special characters.
-
-## Non-goals
-
-No auth, no writes, no query history, no fine-tuning. Single-page portfolio demo focused on safety and a clear voice→SQL→chart path.
+The app can run on Vercel with a hosted Postgres database. Set the same environment variables used locally. API routes require the Node.js runtime.
 
 ## License
 
-MIT (or your chosen license). Instacart data is subject to [Kaggle / Instacart terms](https://www.kaggle.com/datasets/psparks/instacart-market-basket-analysis).
+MIT. Instacart data is subject to the source dataset terms.

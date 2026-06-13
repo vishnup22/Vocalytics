@@ -13,8 +13,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 coverage
+dev-server*.log
 
 backend/data/instacart/*.csv
+backend/uploads/*.json
 
 .cursor/
 .cursorrules
